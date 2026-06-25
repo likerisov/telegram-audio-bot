@@ -17,7 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask для UptimeRobot
 app = Flask(__name__)
 
 @app.route('/')
@@ -25,6 +24,7 @@ def home():
     return "Bot is running!"
 
 def download_audio(url: str, output_dir: str) -> str:
+    # Пробуем разные способы обхода
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
@@ -35,37 +35,51 @@ def download_audio(url: str, output_dir: str) -> str:
         }],
         'quiet': True,
         'no_warnings': True,
-        # Обход защиты YouTube
+        # Способ 1: маскировка под Android
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web'],
+                'player_client': ['android', 'ios', 'web'],
+                'player_skip': ['webpage', 'configs'],
             }
         },
-        # Заголовки как у браузера
+        # Способ 2: разные User-Agent
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-        }
+            'User-Agent': 'com.google.android.youtube/19.29.37 (Linux; U; Android 14; en_US)',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        # Способ 3: не проверять сертификаты
+        'nocheckcertificate': True,
+        # Способ 4: больше попыток
+        'retries': 5,
+        'fragment_retries': 5,
+        'skip_unavailable_fragments': True,
     }
     
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        base = ydl.prepare_filename(info)
-        mp3_path = os.path.splitext(base)[0] + '.mp3'
-        
-        if not os.path.isfile(mp3_path):
-            mp3_files = [f for f in os.listdir(output_dir) if f.endswith('.mp3')]
-            if not mp3_files:
-                raise FileNotFoundError("MP3 не создан")
-            mp3_path = os.path.join(output_dir, mp3_files[0])
-        
-        return mp3_path
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            base = ydl.prepare_filename(info)
+            mp3_path = os.path.splitext(base)[0] + '.mp3'
+            
+            if not os.path.isfile(mp3_path):
+                mp3_files = [f for f in os.listdir(output_dir) if f.endswith('.mp3')]
+                if not mp3_files:
+                    raise FileNotFoundError("MP3 не создан")
+                mp3_path = os.path.join(output_dir, mp3_files[0])
+            
+            return mp3_path
+    except Exception as e:
+        # Если YouTube заблокировал — даём понятную ошибку
+        if "Sign in to confirm" in str(e):
+            raise Exception("YouTube требует подтверждение. Попробуйте другое видео или соцсеть (TikTok, Vimeo)")
+        raise e
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🎵 Привет! Отправь ссылку на видео (YouTube, TikTok и др.), "
-        "и я пришлю MP3!"
+        "🎵 Привет! Отправь ссылку на видео (YouTube, TikTok, Vimeo и др.), "
+        "и я пришлю MP3!\n\n"
+        "⚠️ Из-за ограничений YouTube некоторые видео могут не скачиваться. "
+        "Попробуйте TikTok или Vimeo."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,7 +106,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             await msg.delete()
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {str(e)[:100]}")
+        await msg.edit_text(f"❌ Ошибка: {str(e)[:150]}")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
